@@ -190,9 +190,12 @@ static BOOL LoadCfg(BOOL force)
 
 // ---------- процессы ----------
 // Ищет процесс по имени. Если kill=TRUE - завершает все найденные.
+static BOOL g_killFailed;
+
 static DWORD FindProc(BOOL kill)
 {
     DWORD found = 0;
+    g_killFailed = FALSE;
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap == INVALID_HANDLE_VALUE) return 0;
     g_pe.dwSize = sizeof(g_pe);
@@ -202,7 +205,8 @@ static DWORD FindProc(BOOL kill)
                 if (!found) found = g_pe.th32ProcessID;
                 if (kill) {
                     HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, g_pe.th32ProcessID);
-                    if (h) { TerminateProcess(h, 0); CloseHandle(h); }
+                    if (h) { if (!TerminateProcess(h, 0)) g_killFailed = TRUE; CloseHandle(h); }
+                    else g_killFailed = TRUE;
                 } else break;
             }
         } while (Process32NextW(snap, &g_pe));
@@ -338,7 +342,14 @@ static void DoStop(void)
 {
     if (!g_cfgOk) return;
     FindProc(TRUE);
-    g_fastTicks = 4;
+    if (g_killFailed) {
+        // не хватило прав (процесс запущен от администратора) -> завершаем через taskkill с запросом UAC
+        static WCHAR args[MAX_PATH + 16];
+        lstrcpyW(args, L"/F /IM ");
+        lstrcatW(args, g_procExe);
+        ShellExecuteW(NULL, L"runas", L"taskkill.exe", args, NULL, SW_HIDE);
+    }
+    g_fastTicks = 6;
     SetPoll(FAST_MS);
 }
 
